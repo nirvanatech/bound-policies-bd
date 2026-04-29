@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bound Policies — BD Portal</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] } } },
+    };
+  </script>
+
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .bg-red-500   { background-color: rgb(239 68 68); }
+    .bg-amber-500 { background-color: rgb(245 158 11); }
+    .bg-orange-400{ background-color: rgb(251 146 60); }
+    .bg-slate-400 { background-color: rgb(148 163 184); }
+    @keyframes commentHighlight {
+      0%   { background-color: rgb(254 240 138); box-shadow: 0 0 0 4px rgb(254 240 138); }
+      100% { background-color: transparent; box-shadow: 0 0 0 0 transparent; }
+    }
+    .comment-highlight { animation: commentHighlight 2.4s ease-out; border-radius: 6px; }
+  </style>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="env,react">
+    const { useEffect, useMemo, useState } = React;
+
+    const LANES = [
+      { id: 'cancellations', label: 'Cancellations Pending', dot: 'bg-red-500',    border: 'border-l-red-500',    pill: 'bg-red-50 text-red-700 ring-red-200' },
+      { id: 'nonrenewals',   label: 'Nonrenewals',           dot: 'bg-amber-500',  border: 'border-l-amber-500',  pill: 'bg-amber-50 text-amber-700 ring-amber-200' },
+      { id: 'conditional',   label: 'Conditional Notices',   dot: 'bg-orange-400', border: 'border-l-orange-400', pill: 'bg-orange-50 text-orange-700 ring-orange-200' },
+      { id: 'other',         label: 'Additional Fleet Ops',  dot: 'bg-slate-400',  border: 'border-l-slate-300',  pill: 'bg-slate-100 text-slate-600 ring-slate-200' },
+    ];
+    const LANE_BY_ID = Object.fromEntries(LANES.map(l => [l.id, l]));
+
+    const STATUS_TONE_CLASS = {
+      urgent:  'bg-red-50 text-red-700 ring-red-200',
+      waiting: 'bg-amber-50 text-amber-700 ring-amber-200',
+      active:  'bg-blue-50 text-blue-700 ring-blue-200',
+      neutral: 'bg-slate-100 text-slate-600 ring-slate-200',
+    };
+
+    const STATUS_DESCRIPTION = {
+      'to do':                       'In our queue — work not yet started',
+      'todo':                        'In our queue — work not yet started',
+      'in progress':                 'Our team is working on this',
+      'in progress flatworld':       'Our team is currently drafting the notices',
+      'on hold':                     'Sent out — awaiting agent or stakeholder response',
+      'on hold flatworld':           'Notice has been sent to the agent — awaiting cancel date or rescind request',
+      'cancel endorsement needed':   'Cancel date reached — endorsement needed',
+      'rescission needed':           'Rescinding the cancellation — policy stays in force',
+      'recission needed':            'Rescinding the cancellation — policy stays in force',
+      'renewal review pending':      'In our queue — work not yet started',
+      'policy issuance in progress': 'Policy is being issued',
+      'open':                        'Open — needs review',
+      'reopened':                    'Reopened — back in our queue',
+    };
+
+    const norm = (s) => (s || '').toLowerCase().replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+    const describeStatus = (s) => STATUS_DESCRIPTION[norm(s)] || s || '';
+    const ageLabel  = (d) => (d == null ? '—' : d === 0 ? 'today' : d === 1 ? '1 day' : `${d} days`);
+    const ageTone   = (d) => (d == null ? 'text-slate-500' : d >= 14 ? 'text-red-600' : d >= 7 ? 'text-amber-600' : 'text-slate-500');
+    const fmtNumber = (n) => n == null ? '—' : new Intl.NumberFormat('en-US').format(n);
+
+    function StatusPill({ status, tone }) {
+      if (!status) return null;
+      const display = describeStatus(status);
+      const cls = STATUS_TONE_CLASS[tone] || STATUS_TONE_CLASS.neutral;
+      const showTitle = display !== status;
+      return (
+        <span title={showTitle ? `Jira status: ${status}` : undefined}
+              className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset ${cls}`}>
+          {display}
+        </span>
+      );
+    }
+
+    function SparkleIcon() {
+      return (
+        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fillRule="evenodd" d="M10 1a.75.75 0 0 1 .73.57l.75 3a.75.75 0 0 0 .55.55l3 .75a.75.75 0 0 1 0 1.46l-3 .75a.75.75 0 0 0-.55.55l-.75 3a.75.75 0 0 1-1.46 0l-.75-3a.75.75 0 0 0-.55-.55l-3-.75a.75.75 0 0 1 0-1.46l3-.75a.75.75 0 0 0 .55-.55l.75-3A.75.75 0 0 1 10 1Zm5.5 11a.5.5 0 0 1 .487.379l.358 1.434a.5.5 0 0 0 .342.342l1.434.358a.5.5 0 0 1 0 .974l-1.434.358a.5.5 0 0 0-.342.342l-.358 1.434a.5.5 0 0 1-.974 0l-.358-1.434a.5.5 0 0 0-.342-.342l-1.434-.358a.5.5 0 0 1 0-.974l1.434-.358a.5.5 0 0 0 .342-.342l.358-1.434A.5.5 0 0 1 15.5 12Z" clipRule="evenodd" />
+        </svg>
+      );
+    }
+
+    function CloseIcon() {
+      return (
+        <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+        </svg>
+      );
+    }
+
+    function SearchIcon() {
+      return (
+        <svg className="h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 3.4 9.83l3.13 3.14a.75.75 0 1 0 1.07-1.06l-3.14-3.13A5.5 5.5 0 0 0 9 3.5ZM5 9a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z" clipRule="evenodd" />
+        </svg>
+      );
+    }
+
+    function SummaryField({ label, value }) {
+      if (!value) return null;
+      return (
+        <div className="flex gap-3 py-1.5">
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 w-28 shrink-0 pt-0.5">{label}</div>
+          <div className="text-sm text-slate-700 leading-relaxed flex-1">{value}</div>
+        </div>
+      );
+    }
+
+    const FILE_ICONS = {
+      pdf:   '📄', // we'll use SVG below; fallback emoji not used
+    };
+
+    function PaperclipIcon() {
+      return (
+        <svg className="h-3.5 w-3.5 text-slate-400 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fillRule="evenodd" d="M15.621 4.379a3 3 0 0 0-4.242 0l-7 7a3 3 0 0 0 4.243 4.243l5-5a.75.75 0 0 1 1.06 1.06l-5 5a4.5 4.5 0 1 1-6.364-6.364l7-7a4.5 4.5 0 0 1 6.39 6.337L11.05 14.51A2.5 2.5 0 0 1 7.5 10.96l4.95-4.95a.75.75 0 0 1 1.06 1.06L8.56 12.02a1 1 0 1 0 1.414 1.414l5.586-5.586a3 3 0 0 0 .06-4.47Z" clipRule="evenodd" />
+        </svg>
+      );
+    }
+
+    function fmtFileSize(bytes) {
+      if (!bytes) return '';
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function AttachmentList({ attachments }) {
+      if (!attachments || attachments.length === 0) return null;
+      return (
+        <div className="flex gap-3 py-1.5">
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 w-28 shrink-0 pt-0.5">
+            Documents
+          </div>
+          <div className="flex-1 min-w-0 space-y-1">
+            {attachments.map(a => (
+              <a
+                key={a.id}
+                href={`/api/attachment/${a.id}`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 min-w-0 text-sm text-slate-700 hover:text-blue-700 transition-colors duration-150 cursor-pointer group"
+                title={a.filename}
+              >
+                <PaperclipIcon />
+                <span className="truncate min-w-0 flex-1 group-hover:underline">{a.filename}</span>
+                {a.size > 0 && <span className="text-xs text-slate-400 shrink-0">{fmtFileSize(a.size)}</span>}
+              </a>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function NoticeWordingField({ wording }) {
+      if (!wording) return null;
+      return (
+        <div className="flex gap-3 py-1.5">
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 w-28 shrink-0 pt-0.5">
+            Notice wording
+          </div>
+          <div className="flex-1 min-w-0 text-sm text-slate-700 leading-relaxed whitespace-pre-line border-l-2 border-slate-300 pl-3 italic">
+            {wording}
+          </div>
+        </div>
+      );
+    }
+
+    function SummaryCard({ data }) {
+      return (
+        <div className="rounded-md bg-slate-50 border border-slate-200 px-3 py-2 mt-2 divide-y divide-slate-200/70">
+          <SummaryField label="Original request" value={data.original_request} />
+          <SummaryField label="Latest note"      value={data.latest_note} />
+          <SummaryField label="Currently with"   value={data.currently_with} />
+          <SummaryField label="What's next"      value={data.whats_next} />
+          <NoticeWordingField wording={data.notice_wording} />
+          <AttachmentList attachments={data.attachments} />
+        </div>
+      );
+    }
+
+    function ChevronDownIcon({ open }) {
+      return (
+        <svg
+          className={`h-3.5 w-3.5 text-slate-500 transition-transform duration-150 ${open ? '' : '-rotate-90'}`}
+          viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"
+        >
+          <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+        </svg>
+      );
+    }
+
+    function TicketCard({ ticket, currentBdName, onCommentSent, forceCommsOpen }) {
+      const lane = LANE_BY_ID[ticket.lane] || LANE_BY_ID.other;
+      const [summary, setSummary]   = useState(null);
+      const [loading, setLoading]   = useState(false);
+      const [errMsg, setErrMsg]     = useState(null);
+      const [expanded, setExpanded] = useState(true);
+      const [commsOpen, setCommsOpen] = useState(false);
+      const [body, setBody]         = useState('');
+      const [sending, setSending]   = useState(false);
+      const [sendErr, setSendErr]   = useState(null);
+
+      // Auto-open conversation section when the user navigates here from a notification.
+      useEffect(() => {
+        if (forceCommsOpen) setCommsOpen(true);
+      }, [forceCommsOpen]);
+
+      const comments = ticket.comments || [];
+
+      const summarize = async () => {
+        if (loading) return;
+        setLoading(true); setErrMsg(null);
+        try {
+          const resp = await fetch(`/api/summary/${ticket.key}`);
+          if (!resp.ok) throw new Error((await resp.text()).slice(0, 200));
+          setSummary(await resp.json());
+          setExpanded(true);
+        } catch (e) {
+          setErrMsg(e.message || String(e));
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const sendComment = async () => {
+        const trimmed = body.trim();
+        if (!trimmed || sending) return;
+        setSending(true); setSendErr(null);
+        try {
+          const r = await fetch(`/api/comment/${ticket.key}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ bd_name: currentBdName, body: trimmed }),
+          });
+          if (!r.ok) throw new Error((await r.text()).slice(0, 200));
+          setBody('');
+          if (onCommentSent) await onCommentSent();
+        } catch (e) {
+          setSendErr(e.message || String(e));
+        } finally {
+          setSending(false);
+        }
+      };
+
+      return (
+        <div id={`ticket-${ticket.key}`} className={`bg-white border border-slate-200 border-l-4 ${lane.border} rounded-md p-3`}>
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-slate-900">{ticket.issue_type || 'Jira item'}</span>
+                <span className="text-xs font-mono text-slate-500">{ticket.key}</span>
+              </div>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <StatusPill status={ticket.status} tone={ticket.status_tone} />
+                {ticket.assignee && <span className="text-xs text-slate-500">{ticket.assignee}</span>}
+                {ticket.created && (
+                  <span className="text-xs text-slate-500">
+                    Created {new Date(ticket.created).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {summary && (
+                <button
+                  onClick={() => setExpanded(!expanded)}
+                  className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium border border-slate-200 rounded-md bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300 cursor-pointer transition-colors duration-150 whitespace-nowrap"
+                  aria-label={expanded ? 'Collapse summary' : 'Expand summary'}
+                >
+                  <ChevronDownIcon open={expanded} />
+                  {expanded ? 'Hide' : 'Show'}
+                </button>
+              )}
+              <button
+                onClick={summarize}
+                disabled={loading}
+                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium border border-slate-200 rounded-md bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300 cursor-pointer transition-colors duration-150 disabled:opacity-50 whitespace-nowrap"
+              >
+                <SparkleIcon />
+                {loading ? '…' : summary ? 'Refresh' : 'Summarize'}
+              </button>
+            </div>
+          </div>
+          {summary && expanded && <SummaryCard data={summary} />}
+          {errMsg && (
+            <div className="mt-2 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+              {errMsg}
+            </div>
+          )}
+
+          {/* Inline conversation */}
+          <div className="mt-2 border-t border-slate-100 pt-2">
+            <button
+              onClick={() => setCommsOpen(!commsOpen)}
+              className="w-full flex items-center gap-2 text-xs font-medium text-slate-600 hover:text-slate-900 transition-colors duration-150 cursor-pointer"
+            >
+              <ChevronDownIcon open={commsOpen} />
+              <span>Conversation with Ops</span>
+              <span className="text-slate-400">·</span>
+              <span className="text-slate-500">{comments.length} {comments.length === 1 ? 'message' : 'messages'}</span>
+            </button>
+
+            {commsOpen && (
+              <div className="mt-2 space-y-2">
+                {comments.map(c => <CommentBubble key={c.id} comment={c} />)}
+                <div className="pt-1">
+                  <textarea
+                    value={body}
+                    onChange={e => setBody(e.target.value)}
+                    placeholder={`Message Ops about ${ticket.key}…`}
+                    rows={2}
+                    disabled={sending}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 resize-none disabled:opacity-50"
+                  />
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <div className="text-[11px] text-slate-400">
+                      Sent as <span className="font-medium text-slate-600">{currentBdName}</span>
+                    </div>
+                    <button
+                      onClick={sendComment}
+                      disabled={!body.trim() || sending}
+                      className="px-3 py-1 text-xs font-medium bg-slate-900 text-white rounded-md hover:bg-slate-700 cursor-pointer transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {sending ? 'Sending…' : 'Send to Ops'}
+                    </button>
+                  </div>
+                  {sendErr && (
+                    <div className="mt-2 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                      {sendErr}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    /* ────────────────────── Portal layout ────────────────────── */
+
+    function Sidebar() {
+      const Item = ({ label, active, muted }) => (
+        <div className={`flex items-center justify-between px-3 py-2 rounded-md text-sm cursor-pointer transition-colors ${
+          active ? 'bg-slate-100 text-slate-900 font-medium' :
+          muted  ? 'text-slate-400 cursor-default' :
+                   'text-slate-600 hover:bg-slate-50'
+        }`}>
+          <span>{label}</span>
+          {muted && <span className="text-[10px] uppercase tracking-wider text-slate-400">{muted}</span>}
+        </div>
+      );
+      return (
+        <aside className="w-56 bg-white border-r border-slate-200 flex flex-col shrink-0">
+          <div className="p-4 flex items-center gap-2 border-b border-slate-100">
+            <div className="h-9 w-9 rounded bg-amber-500 text-white flex items-center justify-center font-bold text-sm">N</div>
+            <div className="font-semibold text-sm">NIRVANA BD</div>
+          </div>
+          <nav className="p-2 space-y-0.5 flex-1">
+            <Item label="Pipeline" muted="" />
+            <Item label="Bound Policies" active />
+            <Item label="Calendar" muted="soon" />
+            <Item label="Resources" muted="soon" />
+            <Item label="Agency Rollup" muted="v2" />
+          </nav>
+          <div className="p-4 border-t border-slate-100">
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 mb-2">Connections</div>
+            <div className="flex flex-wrap gap-1">
+              <span className="px-1.5 py-0.5 text-[10px] bg-emerald-100 text-emerald-700 rounded">Snowflake</span>
+              <span className="px-1.5 py-0.5 text-[10px] bg-emerald-100 text-emerald-700 rounded">SFDC</span>
+              <span className="px-1.5 py-0.5 text-[10px] bg-amber-100 text-amber-800 rounded">Jira (live)</span>
+            </div>
+          </div>
+        </aside>
+      );
+    }
+
+    function BellIcon() {
+      return (
+        <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fillRule="evenodd" d="M10 2a6 6 0 0 0-6 6c0 1.886-.454 3.665-1.257 5.234a.75.75 0 0 0 .515 1.084 32.4 32.4 0 0 0 3.4.508 3.5 3.5 0 1 0 6.684 0 32.4 32.4 0 0 0 3.4-.508.75.75 0 0 0 .515-1.084A11.448 11.448 0 0 1 16 8a6 6 0 0 0-6-6Zm0 14.5a2 2 0 0 1-1.95-1.557 33.51 33.51 0 0 0 3.9 0A2 2 0 0 1 10 16.5Z" clipRule="evenodd" />
+        </svg>
+      );
+    }
+
+    function NotificationBell({ bdName, onJumpToPolicy }) {
+      const [notifications, setNotifications] = useState([]);
+      const [open, setOpen]                   = useState(false);
+      const [readIds, setReadIds]             = useState(() => {
+        try { return new Set(JSON.parse(localStorage.getItem('bd_read_comment_ids') || '[]')); }
+        catch { return new Set(); }
+      });
+
+      const persistReadIds = (next) => {
+        try { localStorage.setItem('bd_read_comment_ids', JSON.stringify([...next])); } catch {}
+        setReadIds(new Set(next));
+      };
+
+      const markOneRead = (id) => {
+        const next = new Set(readIds);
+        next.add(id);
+        persistReadIds(next);
+      };
+
+      const markAllRead = () => {
+        const next = new Set(readIds);
+        notifications.forEach(n => next.add(n.comment_id));
+        persistReadIds(next);
+      };
+
+      const load = async () => {
+        if (!bdName) return;
+        try {
+          const r = await fetch(`/api/notifications/${encodeURIComponent(bdName)}`);
+          if (!r.ok) return;
+          const d = await r.json();
+          setNotifications(d.notifications || []);
+        } catch {}
+      };
+
+      useEffect(() => {
+        load();
+        const interval = setInterval(load, 30000);
+        return () => clearInterval(interval);
+      }, [bdName]);
+
+      // Close dropdown when clicking outside
+      useEffect(() => {
+        if (!open) return;
+        const handler = (e) => {
+          if (!e.target.closest('[data-notif-bell]')) setOpen(false);
+        };
+        document.addEventListener('click', handler);
+        return () => document.removeEventListener('click', handler);
+      }, [open]);
+
+      const unreadCount = notifications.filter(n => !readIds.has(n.comment_id)).length;
+
+      const handleClick = (n) => {
+        markOneRead(n.comment_id);
+        setOpen(false);
+        if (onJumpToPolicy) onJumpToPolicy(n);
+      };
+
+      return (
+        <div className="relative" data-notif-bell>
+          <button
+            onClick={() => setOpen(!open)}
+            className="relative p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded cursor-pointer transition-colors"
+            aria-label="Notifications"
+          >
+            <BellIcon />
+            {unreadCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-[10px] font-semibold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1">
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </span>
+            )}
+          </button>
+          {open && (
+            <div className="absolute right-0 top-full mt-2 w-96 bg-white rounded-md shadow-2xl border border-slate-200 z-50 max-h-[480px] overflow-hidden flex flex-col">
+              <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+                <span className="text-sm font-semibold text-slate-900">Notifications</span>
+                {unreadCount > 0 && (
+                  <button
+                    onClick={markAllRead}
+                    className="text-xs text-blue-600 hover:text-blue-800 cursor-pointer"
+                  >
+                    Mark all read
+                  </button>
+                )}
+              </div>
+              <div className="overflow-y-auto flex-1">
+                {notifications.length === 0 ? (
+                  <div className="p-6 text-center text-sm text-slate-500">
+                    <div>No replies yet.</div>
+                    <div className="mt-1 text-xs text-slate-400">
+                      We'll notify you when Ops responds to a thread you started.
+                    </div>
+                  </div>
+                ) : (
+                  notifications.map(n => {
+                    const isUnread = !readIds.has(n.comment_id);
+                    const ts = n.created ? new Date(n.created).toLocaleString() : '';
+                    return (
+                      <button
+                        key={n.comment_id}
+                        onClick={() => handleClick(n)}
+                        className={`w-full text-left px-4 py-3 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors ${isUnread ? 'bg-blue-50/50' : ''}`}
+                      >
+                        <div className="flex items-baseline gap-2">
+                          {isUnread && <span className="h-2 w-2 rounded-full bg-blue-500 shrink-0" />}
+                          <span className="text-xs font-medium text-slate-700 truncate">{n.opportunity_name || n.issue_key}</span>
+                          <span className="text-[11px] text-slate-400 font-mono ml-auto">{n.issue_key}</span>
+                        </div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {n.author_name} · {ts}
+                        </div>
+                        <div className="mt-1 text-sm text-slate-700 line-clamp-2">{n.body}</div>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function TopBar({ onRefresh, lastRefresh, currentBdName, onBdChange, onJumpToPolicy }) {
+      return (
+        <div className="bg-blue-950 text-white px-6 py-2.5 flex items-center gap-4">
+          <div className="font-semibold text-sm">[3] Bound Policies <span className="text-white/60 ml-1 font-normal">[beta]</span></div>
+          <div className="ml-auto flex items-center gap-3">
+            <div className="text-xs text-white/70">{lastRefresh ? `Last refresh: ${lastRefresh.toLocaleString()}` : 'Loading…'}</div>
+            <div className="flex items-center gap-1.5 bg-white/10 rounded px-2 py-1">
+              <span className="text-[10px] uppercase tracking-wider text-white/60">Posting as</span>
+              <input
+                type="text"
+                value={currentBdName}
+                onChange={e => onBdChange(e.target.value)}
+                placeholder="Your name"
+                className="bg-transparent text-xs text-white placeholder-white/40 border-0 outline-none w-32"
+              />
+            </div>
+            <NotificationBell bdName={currentBdName} onJumpToPolicy={onJumpToPolicy} />
+            <button
+              onClick={onRefresh}
+              className="px-3 py-1 bg-amber-500 text-white rounded text-xs font-medium hover:bg-amber-600 cursor-pointer transition-colors"
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function BdNameModal({ onSubmit }) {
+      const [name, setName] = useState('');
+      return (
+        <div className="fixed inset-0 bg-slate-900/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <h2 className="text-lg font-semibold text-slate-900 mb-2">Welcome to Bound Policies</h2>
+            <p className="text-sm text-slate-600 mb-4">
+              Tell us your name so Ops knows who's reaching out when you message them. We'll remember it on this device.
+            </p>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && name.trim()) onSubmit(name.trim()); }}
+              placeholder="e.g., Justine Nazarro"
+              autoFocus
+              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400"
+            />
+            <button
+              onClick={() => name.trim() && onSubmit(name.trim())}
+              disabled={!name.trim()}
+              className="mt-3 w-full px-3 py-2 text-sm font-medium bg-slate-900 text-white rounded-md hover:bg-slate-700 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Continue
+            </button>
+            <p className="mt-3 text-[11px] text-slate-400">
+              You can change this later from the top bar.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    function DemoBanner() {
+      return (
+        <div className="bg-amber-50 border-b border-amber-200 px-6 py-2.5 flex items-start gap-3">
+          <svg className="h-4 w-4 mt-0.5 text-amber-600 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clipRule="evenodd" />
+          </svg>
+          <div className="text-xs text-amber-900 leading-relaxed">
+            <span className="font-semibold">Demo mockup</span> — this page is a visual stand-in for Kacey's existing Bound Policies app. The actual new functionality lives inside the <span className="font-semibold">Jira tab</span> when you click into any account on the right side panel. Everything else (Timeline, Subjectivities, Comms, Billing, sidebar nav, KPI cards) is just here for context and is owned by the parent app.
+          </div>
+        </div>
+      );
+    }
+
+    function KPICard({ label, value, tone }) {
+      const toneClass = {
+        red:    'text-red-600',
+        amber:  'text-amber-600',
+        orange: 'text-orange-500',
+        slate:  'text-slate-700',
+        emerald:'text-emerald-600',
+      }[tone] || 'text-slate-900';
+      return (
+        <div className="bg-white border border-slate-200 rounded-md px-4 py-3 flex-1">
+          <div className={`text-2xl font-semibold ${toneClass}`}>{value}</div>
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 mt-0.5">{label}</div>
+        </div>
+      );
+    }
+
+    function PolicyRow({ policy, selected, onClick }) {
+      const lane = LANE_BY_ID[policy.primary_lane] || LANE_BY_ID.other;
+      const cancelCount = policy.lane_counts?.cancellations || 0;
+      const nrCount     = policy.lane_counts?.nonrenewals || 0;
+      const condCount   = policy.lane_counts?.conditional || 0;
+      const otherCount  = policy.lane_counts?.other || 0;
+      return (
+        <button
+          onClick={onClick}
+          className={`w-full text-left bg-white border border-slate-200 border-l-4 ${lane.border} rounded-md px-4 py-3 flex items-center gap-4 cursor-pointer hover:bg-slate-50 transition-colors duration-150 ${selected ? 'ring-2 ring-blue-500/20 border-blue-200' : ''}`}
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline flex-wrap gap-x-3">
+              <span className="text-sm font-semibold text-slate-900 truncate">{policy.opportunity_name}</span>
+              {policy.dot && <span className="text-xs font-mono text-slate-500">DOT {policy.dot}</span>}
+              {policy.policy_number && <span className="text-xs font-mono text-slate-500">{policy.policy_number}</span>}
+            </div>
+            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-slate-500">
+              {cancelCount > 0 && <span className="text-red-600 font-medium">{cancelCount} cancellation{cancelCount > 1 ? 's' : ''}</span>}
+              {nrCount > 0     && <span className="text-amber-600 font-medium">{nrCount} nonrenewal{nrCount > 1 ? 's' : ''}</span>}
+              {condCount > 0   && <span className="text-orange-500 font-medium">{condCount} conditional</span>}
+              {otherCount > 0  && <span className="text-slate-500">{otherCount} other</span>}
+            </div>
+          </div>
+          <div className="text-xs text-slate-400">›</div>
+        </button>
+      );
+    }
+
+    function PolicyList({ policies, loading, search, onSearch, selectedKey, onSelect }) {
+      const filtered = useMemo(() => {
+        const q = (search || '').trim().toLowerCase();
+        if (!q) return policies;
+        return policies.filter(p => {
+          const hay = [p.opportunity_name, p.dot, p.policy_number].filter(Boolean).join(' ').toLowerCase();
+          return hay.includes(q);
+        });
+      }, [policies, search]);
+
+      if (loading) {
+        return <div className="text-center py-16 text-sm text-slate-500">Loading policies with open work…</div>;
+      }
+
+      return (
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="text-xs text-slate-500">
+              <span className="font-medium text-slate-700">{filtered.length}</span> {filtered.length === 1 ? 'policy' : 'policies'} with open Jira work
+            </div>
+            <div className="ml-auto relative">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none"><SearchIcon /></span>
+              <input
+                type="text"
+                value={search}
+                onChange={e => onSearch(e.target.value)}
+                placeholder="Search account, DOT, policy"
+                className="w-72 pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400"
+              />
+            </div>
+          </div>
+          {filtered.length === 0 ? (
+            <div className="text-center py-12 text-sm text-slate-500">No policies match.</div>
+          ) : (
+            <div className="space-y-2">
+              {filtered.map(p => (
+                <PolicyRow key={p.key} policy={p} selected={selectedKey === p.key} onClick={() => onSelect(p)} />
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ────────────────────── Side panel ────────────────────── */
+
+    const STUB_TABS = ['Timeline', 'Subjectivities', 'Jira', 'Comms', 'Billing'];
+
+    function SidePanel({ policy, onClose, currentBdName, scrollTarget, onScrollHandled }) {
+      const [activeTab, setActiveTab] = useState('Jira');
+      const [tickets, setTickets] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [errMsg, setErrMsg]   = useState(null);
+
+      const reloadTickets = async () => {
+        if (!policy) return;
+        const key = policy.policy_number || policy.dot || policy.key;
+        setLoading(true); setErrMsg(null);
+        try {
+          const r = await fetch(`/api/policy/${encodeURIComponent(key)}/tickets`);
+          if (!r.ok) throw new Error((await r.text()).slice(0, 200));
+          const d = await r.json();
+          setTickets(d.tickets || []);
+        } catch (e) {
+          setErrMsg(e.message || String(e));
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      useEffect(() => {
+        if (!policy) return;
+        // Always default to the Jira tab — the BD reads & replies there.
+        // The Comms tab is just the historical archive.
+        setActiveTab('Jira');
+        setTickets(null);
+        reloadTickets();
+      }, [policy?.key, scrollTarget?.comment_id]);
+
+      if (!policy) return null;
+      const policyKey = policy.policy_number || policy.dot || policy.key;
+
+      return (
+        <aside className="fixed right-0 top-0 bottom-0 w-[480px] bg-white border-l border-slate-200 z-30 shadow-2xl flex flex-col">
+          {/* Header */}
+          <div className="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-900 truncate">{policy.opportunity_name}</div>
+              <div className="text-xs text-slate-500 font-mono mt-0.5">
+                {policy.dot && <>DOT {policy.dot}</>}
+                {policy.dot && policy.policy_number && ' · '}
+                {policy.policy_number}
+              </div>
+            </div>
+            <button onClick={onClose} className="text-slate-400 hover:text-slate-700 cursor-pointer p-1">
+              <CloseIcon />
+            </button>
+          </div>
+
+          {/* Stub policy links */}
+          <div className="px-5 py-3 border-b border-slate-200">
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 mb-2">Policy Links</div>
+            <div className="flex flex-wrap gap-2">
+              <span className="px-2.5 py-1 text-xs font-medium bg-slate-100 text-slate-600 rounded">UW App ↗</span>
+              <span className="px-2.5 py-1 text-xs font-medium bg-slate-100 text-slate-600 rounded">FMCSA ↗</span>
+              <span className="px-2.5 py-1 text-xs font-medium bg-slate-100 text-slate-600 rounded">SFDC ↗</span>
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="px-5 border-b border-slate-200">
+            <div className="flex gap-5">
+              {STUB_TABS.map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-0.5 py-3 text-sm font-medium cursor-pointer transition-colors duration-150 relative ${
+                    activeTab === tab ? 'text-slate-900' : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {tab}
+                  {activeTab === tab && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-slate-900" />}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Tab content */}
+          <div className="flex-1 overflow-y-auto p-5">
+            {activeTab === 'Jira'  && <JiraTab tickets={tickets} loading={loading} errMsg={errMsg} currentBdName={currentBdName} onReload={() => reloadTickets()} scrollTarget={scrollTarget} onScrollHandled={onScrollHandled} />}
+            {activeTab === 'Comms' && <CommsTab policyKey={policyKey} currentBdName={currentBdName} scrollTarget={scrollTarget} onScrollHandled={onScrollHandled} />}
+            {activeTab !== 'Jira' && activeTab !== 'Comms' && (
+              <div className="text-center py-16 text-sm text-slate-400">
+                <div className="font-medium text-slate-600">{activeTab}</div>
+                <div className="mt-1 text-xs">Demo only — owned by the parent Bound Policies portal</div>
+              </div>
+            )}
+          </div>
+        </aside>
+      );
+    }
+
+    /* ────────────────────── Comms Tab ────────────────────── */
+
+    function CommsTab({ policyKey, currentBdName, scrollTarget, onScrollHandled }) {
+      const [threads, setThreads] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [errMsg, setErrMsg]   = useState(null);
+
+      const load = async () => {
+        if (!policyKey) return;
+        setLoading(true); setErrMsg(null);
+        try {
+          const r = await fetch(`/api/policy/${encodeURIComponent(policyKey)}/comms`);
+          if (!r.ok) throw new Error((await r.text()).slice(0, 200));
+          const d = await r.json();
+          setThreads(d.threads || []);
+        } catch (e) {
+          setErrMsg(e.message || String(e));
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      useEffect(() => { load(); }, [policyKey]);
+
+      // After threads load AND there's a pending scroll target from a
+      // notification, find the comment, scroll it into view, and flash a
+      // highlight on it.
+      useEffect(() => {
+        if (!scrollTarget || !threads) return;
+        // wait a tick so DOM nodes exist (thread auto-expand happens via prop)
+        const timer = setTimeout(() => {
+          const el = document.getElementById(`comment-${scrollTarget.comment_id}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.add('comment-highlight');
+            setTimeout(() => el.classList.remove('comment-highlight'), 2400);
+          }
+          if (onScrollHandled) onScrollHandled();
+        }, 200);
+        return () => clearTimeout(timer);
+      }, [threads, scrollTarget?.comment_id]);
+
+      if (loading)  return <div className="text-center py-12 text-sm text-slate-500">Loading conversation history…</div>;
+      if (errMsg)   return <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">{errMsg}</div>;
+
+      const withMessages = (threads || []).filter(t => t.comments && t.comments.length > 0);
+      const open   = withMessages.filter(t => t.is_open);
+      const closed = withMessages.filter(t => !t.is_open);
+
+      if (withMessages.length === 0) {
+        return (
+          <div className="text-center py-16">
+            <div className="text-sm font-medium text-slate-600">No conversation history yet</div>
+            <div className="mt-1 text-xs text-slate-400">Send messages on individual tickets in the Jira tab — they'll be archived here.</div>
+          </div>
+        );
+      }
+
+      const targetIssueKey = scrollTarget?.issue_key;
+
+      return (
+        <div className="space-y-4">
+          <div className="text-xs text-slate-500">
+            Full conversation history for this account — including closed tickets.
+            To send a new message, go to the <span className="font-medium">Jira</span> tab.
+          </div>
+          {open.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[10px] uppercase tracking-wider font-semibold text-slate-500">Active</div>
+              {open.map(t => (
+                <ReadOnlyThread
+                  key={t.issue_key}
+                  thread={t}
+                  forceExpand={t.issue_key === targetIssueKey}
+                />
+              ))}
+            </div>
+          )}
+          {closed.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-[10px] uppercase tracking-wider font-semibold text-slate-500">Closed</div>
+              {closed.map(t => (
+                <ReadOnlyThread
+                  key={t.issue_key}
+                  thread={t}
+                  forceExpand={t.issue_key === targetIssueKey}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function ReadOnlyThread({ thread, forceExpand }) {
+      const lane = LANE_BY_ID[thread.lane] || LANE_BY_ID.other;
+      const [expanded, setExpanded] = useState(thread.is_open);
+      useEffect(() => {
+        if (forceExpand) setExpanded(true);
+      }, [forceExpand]);
+      return (
+        <div className={`bg-white border border-slate-200 border-l-4 ${lane.border} rounded-md`}>
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="w-full flex items-center gap-2 px-4 py-2.5 text-left cursor-pointer hover:bg-slate-50 transition-colors duration-150"
+          >
+            <ChevronDownIcon open={expanded} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-slate-900">{thread.issue_type || 'Jira item'}</span>
+                <span className="text-xs font-mono text-slate-500">{thread.issue_key}</span>
+                {!thread.is_open && (
+                  <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 px-1.5 py-0.5 bg-slate-100 rounded">
+                    {thread.status || 'Closed'}
+                  </span>
+                )}
+              </div>
+            </div>
+            <span className="text-xs text-slate-500">
+              {thread.comments.length} {thread.comments.length === 1 ? 'msg' : 'msgs'}
+            </span>
+          </button>
+          {expanded && (
+            <div className="border-t border-slate-100 px-4 py-3 space-y-2">
+              {thread.comments.map(c => <CommentBubble key={c.id} comment={c} />)}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function CommentBubble({ comment }) {
+      const isBd = comment.is_bd;
+      const cleanBody = isBd
+        ? comment.body.replace(/^\[[^\]]+\(BD\)\]:\s*/, '')
+        : comment.body;
+      const ts = comment.created ? new Date(comment.created).toLocaleString() : '';
+
+      return (
+        <div className={`flex ${isBd ? 'justify-end' : 'justify-start'}`} id={`comment-${comment.id}`}>
+          <div className={`max-w-[85%] rounded-lg px-3 py-2 ${isBd ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-900'}`}>
+            <div className={`text-[10px] font-medium mb-0.5 ${isBd ? 'text-slate-300' : 'text-slate-500'}`}>
+              {isBd ? 'You' : comment.author_name}{ts && <> · {ts}</>}
+            </div>
+            <div className="text-sm whitespace-pre-line leading-relaxed">{cleanBody}</div>
+          </div>
+        </div>
+      );
+    }
+
+    function JiraTab({ tickets, loading, errMsg, currentBdName, onReload, scrollTarget, onScrollHandled }) {
+      const [typeFilter, setTypeFilter] = useState('All types');
+
+      // When triggered from a notification, scroll to the matching ticket
+      // card and into the specific comment, then briefly highlight it.
+      useEffect(() => {
+        if (!scrollTarget || !tickets) return;
+        const timer = setTimeout(() => {
+          const cardEl = document.getElementById(`ticket-${scrollTarget.issue_key}`);
+          if (cardEl) cardEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          setTimeout(() => {
+            const commentEl = document.getElementById(`comment-${scrollTarget.comment_id}`);
+            if (commentEl) {
+              commentEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              commentEl.classList.add('comment-highlight');
+              setTimeout(() => commentEl.classList.remove('comment-highlight'), 2400);
+            }
+            if (onScrollHandled) onScrollHandled();
+          }, 400);
+        }, 200);
+        return () => clearTimeout(timer);
+      }, [tickets, scrollTarget?.comment_id]);
+
+      const issueTypes = useMemo(() => {
+        if (!tickets) return [];
+        const set = new Set();
+        tickets.forEach(t => t.issue_type && set.add(t.issue_type));
+        return [...set].sort();
+      }, [tickets]);
+
+      // Reset filter when tickets change (i.e., a new policy was selected).
+      useEffect(() => { setTypeFilter('All types'); }, [tickets]);
+
+      if (loading) return <div className="text-center py-12 text-sm text-slate-500">Loading open Jira work…</div>;
+      if (errMsg)  return <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">Failed to load: {errMsg}</div>;
+      if (!tickets || tickets.length === 0) {
+        return (
+          <div className="text-center py-16">
+            <div className="text-sm font-medium text-slate-600">No open Jira work</div>
+            <div className="mt-1 text-xs text-slate-400">Nothing pending for this policy right now.</div>
+          </div>
+        );
+      }
+
+      const filtered = typeFilter === 'All types'
+        ? tickets
+        : tickets.filter(t => t.issue_type === typeFilter);
+
+      const counts = LANES.reduce((acc, l) => {
+        acc[l.id] = filtered.filter(t => t.lane === l.id).length;
+        return acc;
+      }, {});
+
+      return (
+        <div>
+          {issueTypes.length > 1 && (
+            <div className="mb-3">
+              <select
+                value={typeFilter}
+                onChange={e => setTypeFilter(e.target.value)}
+                className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-md bg-white text-slate-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400"
+              >
+                <option value="All types">All types ({tickets.length})</option>
+                {issueTypes.map(t => {
+                  const c = tickets.filter(x => x.issue_type === t).length;
+                  return <option key={t} value={t}>{t} ({c})</option>;
+                })}
+              </select>
+            </div>
+          )}
+
+          <div className="text-xs text-slate-500 mb-3 flex flex-wrap gap-x-3">
+            <span>
+              <span className="font-medium text-slate-700">{filtered.length}</span>
+              {typeFilter === 'All types'
+                ? <> open {filtered.length === 1 ? 'item' : 'items'}</>
+                : <> {filtered.length === 1 ? 'item' : 'items'}</>}
+            </span>
+            {counts.cancellations > 0 && <span className="text-red-600">{counts.cancellations} cancellation</span>}
+            {counts.nonrenewals   > 0 && <span className="text-amber-600">{counts.nonrenewals} nonrenewal</span>}
+            {counts.conditional   > 0 && <span className="text-orange-500">{counts.conditional} conditional</span>}
+            {counts.other         > 0 && <span className="text-slate-500">{counts.other} other</span>}
+          </div>
+
+          {filtered.length === 0 ? (
+            <div className="text-center py-8 text-sm text-slate-500">No tickets of this type.</div>
+          ) : (
+            <div className="space-y-3">
+              {filtered.map(t => (
+                <TicketCard
+                  key={t.key}
+                  ticket={t}
+                  currentBdName={currentBdName}
+                  onCommentSent={onReload}
+                  forceCommsOpen={scrollTarget?.issue_key === t.key}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ────────────────────── App root ────────────────────── */
+
+    function Portal() {
+      const [data, setData] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [error, setError] = useState(null);
+      const [search, setSearch] = useState('');
+      const [selected, setSelected] = useState(null);
+      const [scrollTarget, setScrollTarget] = useState(null);  // {issue_key, comment_id} from notification clicks
+      const [currentBdName, setCurrentBdNameState] = useState(() => {
+        try { return localStorage.getItem('bd_name') || ''; }
+        catch { return ''; }
+      });
+
+      const setCurrentBdName = (name) => {
+        const trimmed = (name || '').trim();
+        setCurrentBdNameState(trimmed);
+        try { localStorage.setItem('bd_name', trimmed); } catch {}
+      };
+
+      const load = async () => {
+        setLoading(true); setError(null);
+        try {
+          const resp = await fetch('/api/policies');
+          if (!resp.ok) throw new Error((await resp.text()).slice(0, 200));
+          setData(await resp.json());
+        } catch (e) {
+          setError(e.message || String(e));
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      useEffect(() => { load(); }, []);
+
+      const policies = data?.policies || [];
+      const totals   = data?.totals   || {};
+      const lastRefresh = data?.generated_at ? new Date(data.generated_at) : null;
+
+      return (
+        <div className="min-h-screen flex flex-col">
+          <TopBar
+            onRefresh={load}
+            lastRefresh={lastRefresh}
+            currentBdName={currentBdName}
+            onBdChange={setCurrentBdName}
+            onJumpToPolicy={(n) => {
+              const policyKey = n.policy_number || n.dot || n.opportunity_name;
+              // Only match on non-null equal values — otherwise a notification
+              // with dot=null matches the first policy that also has dot=null.
+              const match = (data?.policies || []).find(p =>
+                (n.policy_number && p.policy_number === n.policy_number) ||
+                (n.opportunity_name && p.opportunity_name === n.opportunity_name) ||
+                (n.dot && p.dot === n.dot)
+              );
+              setScrollTarget({ issue_key: n.issue_key, comment_id: n.comment_id });
+              if (match) setSelected(match);
+              else if (policyKey) {
+                setSelected({
+                  key: policyKey,
+                  policy_number: n.policy_number,
+                  dot: n.dot,
+                  opportunity_name: n.opportunity_name,
+                  primary_lane: 'other',
+                  lane_counts: {},
+                });
+              }
+            }}
+          />
+          <DemoBanner />
+          <div className="flex-1 flex">
+            <Sidebar />
+            <main className="flex-1 p-6 overflow-y-auto">
+              <div className="max-w-5xl">
+                <div className="flex items-baseline justify-between mb-4">
+                  <h1 className="text-xl font-semibold text-slate-900">Bound Policies</h1>
+                  <div className="text-xs text-slate-500">Showing only policies with open Jira work · live data</div>
+                </div>
+
+                <div className="flex gap-3 mb-6">
+                  <KPICard label="Policies w/ open work" value={fmtNumber(totals.policies_with_open_work)} tone="slate" />
+                  <KPICard label="Cancellations" value={fmtNumber(totals.by_lane?.cancellations)} tone="red" />
+                  <KPICard label="Nonrenewals"   value={fmtNumber(totals.by_lane?.nonrenewals)}   tone="amber" />
+                  <KPICard label="Conditional"   value={fmtNumber(totals.by_lane?.conditional)}   tone="orange" />
+                  <KPICard label="Other open"    value={fmtNumber(totals.by_lane?.other)}         tone="slate" />
+                </div>
+
+                {error ? (
+                  <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                    Failed to load policies: {error}
+                  </div>
+                ) : (
+                  <PolicyList
+                    policies={policies}
+                    loading={loading}
+                    search={search}
+                    onSearch={setSearch}
+                    selectedKey={selected?.key}
+                    onSelect={setSelected}
+                  />
+                )}
+              </div>
+            </main>
+          </div>
+
+          {selected && (
+            <SidePanel
+              policy={selected}
+              onClose={() => { setSelected(null); setScrollTarget(null); }}
+              currentBdName={currentBdName}
+              scrollTarget={scrollTarget}
+              onScrollHandled={() => setScrollTarget(null)}
+            />
+          )}
+          {!currentBdName && <BdNameModal onSubmit={setCurrentBdName} />}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<Portal />);
+  </script>
+</body>
+</html>

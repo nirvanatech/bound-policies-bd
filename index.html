@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bound Policies (BD)</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+        },
+      },
+      // Tailwind's CDN is JIT — these classes show up dynamically based on lane data,
+      // so they must be present in source for Tailwind to detect them. Safelist via
+      // explicit class names below in the CSS rather than purging dynamically.
+    };
+  </script>
+
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    /* Static safelist for dynamically constructed classes the CDN purger would miss. */
+    .bg-red-500   { background-color: rgb(239 68 68); }
+    .bg-amber-500 { background-color: rgb(245 158 11); }
+    .bg-orange-400{ background-color: rgb(251 146 60); }
+    .bg-slate-400 { background-color: rgb(148 163 184); }
+  </style>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="env,react">
+    const { useMemo, useState, useEffect } = React;
+
+    const LANES = [
+      { id: 'cancellations', label: 'Cancellations Pending', dotClass: 'bg-red-500',    border: 'border-l-red-500',    pill: 'bg-red-50 text-red-700 ring-red-200' },
+      { id: 'nonrenewals',   label: 'Nonrenewals',           dotClass: 'bg-amber-500',  border: 'border-l-amber-500',  pill: 'bg-amber-50 text-amber-700 ring-amber-200' },
+      { id: 'conditional',   label: 'Conditional Notices',   dotClass: 'bg-orange-400', border: 'border-l-orange-400', pill: 'bg-orange-50 text-orange-700 ring-orange-200' },
+      { id: 'other',         label: 'Additional Fleet Ops',  dotClass: 'bg-slate-400',  border: 'border-l-slate-300',  pill: 'bg-slate-100 text-slate-600 ring-slate-200' },
+    ];
+
+    const LANE_BY_ID = Object.fromEntries(LANES.map(l => [l.id, l]));
+
+    function ChevronIcon({ open }) {
+      return (
+        <svg className={`h-4 w-4 text-slate-400 transition-transform duration-150 ${open ? 'rotate-90' : ''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clipRule="evenodd" />
+        </svg>
+      );
+    }
+
+    function SearchIcon() {
+      return (
+        <svg className="h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 1 0 3.4 9.83l3.13 3.14a.75.75 0 1 0 1.07-1.06l-3.14-3.13A5.5 5.5 0 0 0 9 3.5ZM5 9a4 4 0 1 1 8 0 4 4 0 0 1-8 0Z" clipRule="evenodd" />
+        </svg>
+      );
+    }
+
+    function ExternalLinkIcon() {
+      return (
+        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path d="M11 3a1 1 0 1 0 0 2h2.586l-6.293 6.293a1 1 0 1 0 1.414 1.414L15 6.414V9a1 1 0 1 0 2 0V4a1 1 0 0 0-1-1h-5Z" />
+          <path d="M5 5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-3a1 1 0 1 0-2 0v3H5V7h3a1 1 0 0 0 0-2H5Z" />
+        </svg>
+      );
+    }
+
+    function RefreshIcon({ spinning }) {
+      return (
+        <svg className={`h-4 w-4 ${spinning ? 'animate-spin' : ''}`} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 0 1-9.201 2.466l-.312-.311h2.433a.75.75 0 0 0 0-1.5H3.989a.75.75 0 0 0-.75.75v4.242a.75.75 0 0 0 1.5 0v-2.43l.31.31a7 7 0 0 0 11.712-3.138.75.75 0 0 0-1.449-.39Zm1.23-3.723a.75.75 0 0 0 .219-.53V2.929a.75.75 0 0 0-1.5 0V5.36l-.31-.31A7 7 0 0 0 3.239 8.188a.75.75 0 1 0 1.448.389A5.5 5.5 0 0 1 13.89 6.11l.311.31h-2.432a.75.75 0 0 0 0 1.5h4.243a.75.75 0 0 0 .53-.219Z" clipRule="evenodd" />
+        </svg>
+      );
+    }
+
+    const fmtNumber = (n) => (n === null || n === undefined ? '—' : new Intl.NumberFormat('en-US').format(n));
+    const fmtCurrency = (n) => (n === null || n === undefined ? null : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n));
+    const ageLabel = (d) => (d === null || d === undefined ? '—' : d === 0 ? 'today' : d === 1 ? '1d' : `${d}d`);
+    const ageTone = (d) => (d === null || d === undefined ? 'text-slate-500' : d >= 14 ? 'text-red-600' : d >= 7 ? 'text-amber-600' : 'text-slate-500');
+
+    function pickInitialLane(lanes) {
+      for (const l of LANES) {
+        if ((lanes[l.id] || []).length > 0) return l.id;
+      }
+      return LANES[0].id;
+    }
+
+    function SparkleIcon() {
+      return (
+        <svg className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+          <path fillRule="evenodd" d="M10 1a.75.75 0 0 1 .73.57l.75 3a.75.75 0 0 0 .55.55l3 .75a.75.75 0 0 1 0 1.46l-3 .75a.75.75 0 0 0-.55.55l-.75 3a.75.75 0 0 1-1.46 0l-.75-3a.75.75 0 0 0-.55-.55l-3-.75a.75.75 0 0 1 0-1.46l3-.75a.75.75 0 0 0 .55-.55l.75-3A.75.75 0 0 1 10 1Zm5.5 11a.5.5 0 0 1 .487.379l.358 1.434a.5.5 0 0 0 .342.342l1.434.358a.5.5 0 0 1 0 .974l-1.434.358a.5.5 0 0 0-.342.342l-.358 1.434a.5.5 0 0 1-.974 0l-.358-1.434a.5.5 0 0 0-.342-.342l-1.434-.358a.5.5 0 0 1 0-.974l1.434-.358a.5.5 0 0 0 .342-.342l.358-1.434A.5.5 0 0 1 15.5 12Z" clipRule="evenodd" />
+        </svg>
+      );
+    }
+
+    function SummaryField({ label, value }) {
+      if (!value) return null;
+      return (
+        <div className="flex gap-3 py-1.5">
+          <div className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 w-28 shrink-0 pt-0.5">
+            {label}
+          </div>
+          <div className="text-sm text-slate-700 leading-relaxed flex-1">
+            {value}
+          </div>
+        </div>
+      );
+    }
+
+    function SummaryCard({ data }) {
+      return (
+        <div className="rounded-md bg-slate-50 border border-slate-200 px-3 py-2 divide-y divide-slate-200/70">
+          <SummaryField label="Original request" value={data.original_request} />
+          <SummaryField label="Latest note"      value={data.latest_note} />
+          <SummaryField label="Currently with"   value={data.currently_with} />
+          <SummaryField label="What's next"      value={data.whats_next} />
+        </div>
+      );
+    }
+
+    function TicketRow({ ticket }) {
+      const lane = LANE_BY_ID[ticket.lane] || LANE_BY_ID.other;
+      const [summary, setSummary] = useState(null);
+      const [loading, setLoading] = useState(false);
+      const [errMsg, setErrMsg]   = useState(null);
+
+      const summarize = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (loading) return;
+        setLoading(true); setErrMsg(null);
+        try {
+          const resp = await fetch(`/api/summary/${ticket.key}`);
+          if (!resp.ok) throw new Error((await resp.text()).slice(0, 200));
+          const data = await resp.json();
+          setSummary(data);
+        } catch (e) {
+          setErrMsg(e.message || String(e));
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      return (
+        <div className="border-t border-slate-100 hover:bg-slate-50 transition-colors duration-150">
+          <div className="flex items-start gap-3 px-4 py-2.5">
+            <span className={`mt-0.5 inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset ${lane.pill}`}>
+              {ticket.notice_type || ticket.issue_type}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="text-sm text-slate-900 truncate">{ticket.summary || ticket.key}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                <StatusPill status={ticket.status} tone={ticket.status_tone} />
+                {ticket.assignee && <span>{ticket.assignee}</span>}
+                <span className={ageTone(ticket.age_days)}>opened {ageLabel(ticket.age_days)} ago</span>
+                {ticket.due_date && <span>due {ticket.due_date}</span>}
+              </div>
+            </div>
+            <button
+              onClick={summarize}
+              disabled={loading}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium border border-slate-200 rounded-md bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300 cursor-pointer transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              <SparkleIcon />
+              {loading ? 'Summarizing…' : summary ? 'Refresh summary' : 'Summarize'}
+            </button>
+          </div>
+          {(summary || errMsg) && (
+            <div className="px-4 pb-3 -mt-1">
+              {summary && <SummaryCard data={summary} />}
+              {errMsg && (
+                <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+                  Couldn't generate summary: {errMsg}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const STATUS_TONE_CLASS = {
+      urgent:  'bg-red-50 text-red-700 ring-red-200',
+      waiting: 'bg-amber-50 text-amber-700 ring-amber-200',
+      active:  'bg-blue-50 text-blue-700 ring-blue-200',
+      neutral: 'bg-slate-100 text-slate-600 ring-slate-200',
+    };
+
+    // Plain-language translations for Jira workflow statuses BDs see across the
+    // FLT project. Keys are lowercase with dashes-as-spaces so spacing variants
+    // ("On Hold - Flatworld" vs "On Hold-Flatworld") all match. The technical
+    // status is preserved as a tooltip for Ops/Jira communication.
+    const STATUS_DESCRIPTION = {
+      'to do':                       'In our queue — work not yet started',
+      'todo':                        'In our queue — work not yet started',
+      'in progress':                 'Our team is working on this',
+      'in progress flatworld':       'Contractor (Flatworld) is drafting the notices',
+      'on hold':                     'Sent out — awaiting agent or stakeholder response',
+      'on hold flatworld':           'Notice sent to agent — awaiting cancel date or rescind request',
+      'cancel endorsement needed':   'Cancel date reached — endorsement needed',
+      'rescission needed':           'Rescinding the cancellation — policy stays in force',
+      'recission needed':            'Rescinding the cancellation — policy stays in force',
+      'renewal review pending':      'Renewal under review — pending decision',
+      'policy issuance in progress': 'Policy is being issued',
+      'open':                        'Open — needs review',
+      'reopened':                    'Reopened — back in our queue',
+    };
+
+    function _normalizeStatus(s) {
+      return (s || '').toLowerCase().replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
+    function describeStatus(status) {
+      if (!status) return null;
+      const key = _normalizeStatus(status);
+      return STATUS_DESCRIPTION[key] || status;
+    }
+
+    function StatusPill({ status, tone }) {
+      if (!status) return null;
+      const cls = STATUS_TONE_CLASS[tone] || STATUS_TONE_CLASS.neutral;
+      const display = describeStatus(status);
+      const showsTechnicalOnHover = display !== status;
+      return (
+        <span
+          title={showsTechnicalOnHover ? `Jira status: ${status}` : undefined}
+          className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset ${cls}`}
+        >
+          {display}
+        </span>
+      );
+    }
+
+    function AccountRow({ account, expanded, onToggle }) {
+      const lane = LANE_BY_ID[account.primary_lane] || LANE_BY_ID.other;
+      const ticketCount = account.tickets.length;
+      const gwp = fmtCurrency(account.gwp);
+      const policies = [account.al_policy, account.gl_policy, account.mtc_policy].filter(Boolean);
+
+      return (
+        <div className={`bg-white border border-slate-200 border-l-4 ${lane.border} rounded-md overflow-hidden mb-2`}>
+          <button onClick={onToggle} className="w-full flex items-center gap-4 px-4 py-3 text-left cursor-pointer hover:bg-slate-50 transition-colors duration-150">
+            <ChevronIcon open={expanded} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center flex-wrap gap-x-3 gap-y-1">
+                <span className="text-sm font-semibold text-slate-900 truncate">
+                  {account.opportunity_name || `DOT ${account.dot || account.key}`}
+                </span>
+                <StatusPill status={account.primary_status} tone={account.primary_status_tone} />
+              </div>
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                {account.dot && <span className="font-mono">DOT {account.dot}</span>}
+                {policies.map(p => <span key={p} className="font-mono">{p}</span>)}
+              </div>
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500">
+                <span>{account.bd_owner}</span>
+                <span>{ticketCount} {ticketCount === 1 ? 'ticket' : 'tickets'}</span>
+                <span className={ageTone(account.oldest_age)}>oldest {ageLabel(account.oldest_age)}</span>
+                {account.stage && <span>{account.stage}</span>}
+              </div>
+            </div>
+            {gwp && <span className="text-xs font-mono text-slate-500 whitespace-nowrap">{gwp}</span>}
+          </button>
+          {expanded && (
+            <div className="bg-slate-50/50">
+              {account.tickets.slice().sort((a, b) => (b.age_days || 0) - (a.age_days || 0)).map(t => (
+                <TicketRow key={t.key} ticket={t} />
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function LaneTab({ lane, count, active, onClick }) {
+      return (
+        <button onClick={onClick} className={`relative px-4 py-2.5 text-sm font-medium cursor-pointer transition-colors duration-150 ${active ? 'text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>
+          <span className="flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${lane.dotClass}`} />
+            {lane.label}
+            <span className={`text-xs font-mono ${active ? 'text-slate-700' : 'text-slate-400'}`}>{count}</span>
+          </span>
+          {active && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-slate-900" />}
+        </button>
+      );
+    }
+
+    function LaneSubhead({ accounts }) {
+      const totalTickets = accounts.reduce((s, a) => s + a.tickets.length, 0);
+      const stale = accounts.filter(a => a.oldest_age >= 7).length;
+      return (
+        <div className="text-xs text-slate-500 px-1 py-2">
+          {accounts.length} {accounts.length === 1 ? 'account' : 'accounts'} ·{' '}
+          {totalTickets} {totalTickets === 1 ? 'ticket' : 'tickets'}
+          {stale > 0 && <> · <span className="text-amber-700">{stale} untouched &gt; 7 days</span></>}
+        </div>
+      );
+    }
+
+    function EmptyLane({ lane }) {
+      return (
+        <div className="text-center py-16">
+          <div className="text-sm text-slate-500">No accounts in {lane.label}.</div>
+          <div className="mt-1 text-xs text-slate-400">You're all caught up.</div>
+        </div>
+      );
+    }
+
+    function SfdcWarning({ message }) {
+      return (
+        <div className="rounded-md bg-amber-50 border border-amber-200 px-4 py-2.5 text-xs text-amber-800 mb-4">
+          <span className="font-medium">Salesforce data unavailable.</span>{' '}
+          Showing Jira-only view (no BD owner, account name, or policy number from SFDC).
+          <div className="mt-1 font-mono text-[11px] text-amber-700">{message}</div>
+        </div>
+      );
+    }
+
+    function FullScreenError({ message, onRetry }) {
+      return (
+        <div className="min-h-screen flex items-center justify-center px-6">
+          <div className="max-w-md text-center">
+            <div className="text-base font-semibold text-slate-900">Couldn't load data</div>
+            <div className="mt-2 text-sm text-slate-600">{message}</div>
+            <button onClick={onRetry} className="mt-4 inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium bg-slate-900 text-white rounded-md hover:bg-slate-700 cursor-pointer transition-colors duration-150">
+              <RefreshIcon /> Retry
+            </button>
+            <div className="mt-6 text-xs text-slate-500">
+              Check that <code className="font-mono">.env</code> has valid <code>JIRA_*</code> and <code>SFDC_*</code> credentials, then restart the server.
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function FullScreenLoading() {
+      return (
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="text-sm text-slate-500 inline-flex items-center gap-2">
+            <RefreshIcon spinning /> Loading bound policies…
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [data, setData]               = useState(null);
+      const [loading, setLoading]         = useState(true);
+      const [error, setError]             = useState(null);
+      const [selectedLane, setSelectedLane] = useState('cancellations');
+      const [bdFilter, setBdFilter]       = useState('All BDs');
+      const [search, setSearch]           = useState('');
+      const [expandedKey, setExpandedKey] = useState(null);
+      const [refreshing, setRefreshing]   = useState(false);
+
+      const load = async () => {
+        setRefreshing(true);
+        try {
+          const resp = await fetch('/api/data');
+          if (!resp.ok) {
+            const text = await resp.text();
+            throw new Error(`${resp.status}: ${text}`);
+          }
+          const json = await resp.json();
+          setData(json);
+          setSelectedLane(prev => (json.lanes[prev] || []).length > 0 ? prev : pickInitialLane(json.lanes));
+          setError(null);
+        } catch (e) {
+          setError(e.message || String(e));
+        } finally {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      };
+
+      useEffect(() => { load(); }, []);
+
+      if (loading) return <FullScreenLoading />;
+      if (error)   return <FullScreenError message={error} onRetry={load} />;
+
+      const lanes    = data?.lanes || {};
+      const bdOwners = data?.bd_owners || [];
+      const sfdcErr  = data?.sfdc_error;
+
+      const filtered = (lanes[selectedLane] || []).filter(a => {
+        if (bdFilter !== 'All BDs' && a.bd_owner !== bdFilter) return false;
+        if (!search.trim()) return true;
+        const hay = [a.opportunity_name, a.dot, a.policy_number, a.bd_owner].filter(Boolean).join(' ').toLowerCase();
+        return hay.includes(search.trim().toLowerCase());
+      });
+
+      const totalAccounts = LANES.reduce((s, l) => s + (lanes[l.id]?.length || 0), 0);
+
+      return (
+        <div className="min-h-screen bg-slate-50 text-slate-900">
+          <header className="sticky top-0 z-10 bg-white border-b border-slate-200">
+            <div className="max-w-7xl mx-auto px-6 py-3 flex items-center gap-4">
+              <div>
+                <h1 className="text-lg font-semibold">Bound Policies</h1>
+                <div className="text-xs text-slate-500">
+                  {fmtNumber(totalAccounts)} accounts · {fmtNumber(data?.totals?.tickets)} open tickets
+                </div>
+              </div>
+
+              <div className="ml-auto flex items-center gap-3">
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none">
+                    <SearchIcon />
+                  </span>
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    placeholder="Search DOT, account, policy"
+                    className="w-64 pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-colors duration-150"
+                  />
+                </div>
+
+                <select value={bdFilter} onChange={e => setBdFilter(e.target.value)} className="px-3 py-1.5 text-sm border border-slate-200 rounded-md bg-white text-slate-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 transition-colors duration-150">
+                  <option>All BDs</option>
+                  {bdOwners.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+
+                <button onClick={load} disabled={refreshing} className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium border border-slate-200 rounded-md bg-white text-slate-700 hover:bg-slate-50 cursor-pointer transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <RefreshIcon spinning={refreshing} />
+                  {refreshing ? 'Refreshing' : 'Refresh'}
+                </button>
+              </div>
+            </div>
+
+            <div className="max-w-7xl mx-auto px-6 flex gap-1 border-t border-slate-100">
+              {LANES.map(lane => (
+                <LaneTab key={lane.id} lane={lane} count={(lanes[lane.id] || []).length} active={selectedLane === lane.id} onClick={() => { setSelectedLane(lane.id); setExpandedKey(null); }} />
+              ))}
+            </div>
+          </header>
+
+          <main className="max-w-7xl mx-auto px-6 py-6">
+            {sfdcErr && <SfdcWarning message={sfdcErr} />}
+            <LaneSubhead accounts={filtered} />
+            {filtered.length === 0 ? (
+              <EmptyLane lane={LANE_BY_ID[selectedLane]} />
+            ) : (
+              <div>
+                {filtered.map(a => (
+                  <AccountRow key={a.key} account={a} expanded={expandedKey === a.key} onToggle={() => setExpandedKey(expandedKey === a.key ? null : a.key)} />
+                ))}
+              </div>
+            )}
+
+            <div className="mt-8 text-[11px] text-slate-400 text-center">
+              Last refreshed {data?.generated_at ? new Date(data.generated_at).toLocaleString() : '—'}
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
